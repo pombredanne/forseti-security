@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,10 @@ CREATE_TABLE = """
 
 SELECT_SNAPSHOT_CYCLES_TABLE = """
     SELECT TABLE_NAME from information_schema.tables
-    WHERE TABLE_NAME = 'snapshot_cycles';"""
+    WHERE TABLE_NAME = 'snapshot_cycles' 
+    AND TABLE_SCHEMA in (
+        SELECT DATABASE()
+        );"""
 
 INSERT_CYCLE = """
     INSERT INTO snapshot_cycles

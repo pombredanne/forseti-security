@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,25 +21,26 @@ apputils run_script_module, refer to:
 https://github.com/google/google-apputils/blob/master/google/apputils/run_script_module.py
 """
 
+# pylint: disable=invalid-name
+
 from google.apputils import run_script_module
 
-# TODO: Investigate improving so the pylint disable isn't needed.
-# pylint: disable=invalid-name
 def RunForsetiInventory():
     """Run Forseti Inventory module."""
     import google.cloud.security.inventory.inventory_loader as forseti_inventory
     run_script_module.RunScriptModule(forseti_inventory)
 
-# TODO: Investigate improving so the pylint disable isn't needed.
-# pylint: disable=invalid-name
 def RunForsetiScanner():
     """Run Forseti Scanner module."""
     import google.cloud.security.scanner.scanner as forseti_scanner
     run_script_module.RunScriptModule(forseti_scanner)
 
-# TODO: Investigate improving so the pylint disable isn't needed.
-# pylint: disable=invalid-name
 def RunForsetiEnforcer():
     """Run Forseti Enforcer module."""
     import google.cloud.security.enforcer.enforcer as forseti_enforcer
     run_script_module.RunScriptModule(forseti_enforcer)
+
+def RunForsetiNotifier():
+    """Run Forseti Notifier module."""
+    import google.cloud.security.notifier.notifier as forseti_notifier
+    run_script_module.RunScriptModule(forseti_notifier)

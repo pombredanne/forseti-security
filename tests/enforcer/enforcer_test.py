@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ import copy
 import json
 import httplib2
 import mock
+import unittest
 
-import testing_constants as constants
-from google.apputils import basetest
+from tests.enforcer import testing_constants as constants
+from tests.unittest_utils import ForsetiTestCase
 from google.protobuf import text_format
 from tests.unittest_utils import get_datafile_path
 
@@ -33,7 +34,7 @@ from google.cloud.security.enforcer import enforcer
 MOCK_TIMESTAMP = 1234567890
 
 
-class EnforcerTest(basetest.TestCase):
+class EnforcerTest(ForsetiTestCase):
     """Extended unit tests for BatchFirewallEnforcer class."""
 
     def setUp(self):
@@ -54,6 +55,7 @@ class EnforcerTest(basetest.TestCase):
         self.mock_time.now().AsSecondsSinceEpoch.return_value = MOCK_TIMESTAMP
 
         self.enforcer = enforcer.initialize_batch_enforcer(
+            {},
             concurrent_threads=1,
             max_write_threads=1,
             max_running_operations=0,
@@ -108,6 +110,21 @@ class EnforcerTest(basetest.TestCase):
 
       self.assertEqual(expected_results, project_result)
 
+    def test_enforcer_raises_exception_with_invalid_json_policy(self):
+        """Verifies json parsed correct as a list of dictionaries.
+
+        Setup:
+          * Load an invalid json file (no list).
+          * Give it to enforcer to parse and load
+
+        Expected Results:
+          * Enforcer should raise InvalidParsedPolicyFileError
+        """
+        policy_filename = get_datafile_path(__file__, 'invalid_sample_policy.json')
+        with self.assertRaises(enforcer.InvalidParsedPolicyFileError) as r:
+            enforcer.enforce_single_project(
+                self.enforcer, self.project, policy_filename)
+
 
 if __name__ == '__main__':
-    basetest.main()
+    unittest.main()

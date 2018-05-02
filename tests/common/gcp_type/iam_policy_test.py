@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,9 @@
 
 """Test the IamPolicy."""
 
-from google.apputils import basetest
-from google.cloud.security.common.gcp_type.errors import InvalidIamPolicyError
+import unittest
+
+from tests.unittest_utils import ForsetiTestCase
 from google.cloud.security.common.gcp_type.errors import InvalidIamPolicyBindingError
 from google.cloud.security.common.gcp_type.errors import InvalidIamPolicyMemberError
 from google.cloud.security.common.gcp_type.iam_policy import IamPolicy
@@ -29,7 +30,7 @@ def _get_member_list(members):
             for member in members]
 
 
-class IamPolicyTest(basetest.TestCase):
+class IamPolicyTest(ForsetiTestCase):
     """Test IAM Policy class."""
 
     def setUp(self):
@@ -91,6 +92,10 @@ class IamPolicyTest(basetest.TestCase):
             'user:not-user@company.com'))
         self.assertFalse(iam_policy_members[2].matches(
             'user:anyone@not.company.com'))
+        self.assertFalse(iam_policy_members[2].matches(
+            'user:anyone@notmycompany.com'))
+        self.assertFalse(iam_policy_members[2].matches(
+            'user:anyone@mycompany.com.notmycompany.com'))
         self.assertFalse(iam_policy_members[3].matches(
             'serviceAccount:someone@gserviceaccount.com'))
         self.assertFalse(iam_policy_members[3].matches(
@@ -122,7 +127,7 @@ class IamPolicyTest(basetest.TestCase):
             'members': self.test_members
         }
         iam_binding2 = IamPolicyBinding.create_from(binding2)
-        self.assertEqual('^roles\/.+$', iam_binding2.role_pattern.pattern)
+        self.assertEqual('^roles\/.+?$', iam_binding2.role_pattern.pattern)
 
     def test_binding_missing_role_raises(self):
         """Test that a binding with no role raises an exception."""
@@ -168,8 +173,34 @@ class IamPolicyTest(basetest.TestCase):
         """Test that an empty policy has no bindings."""
         empty_policy = IamPolicy()
         self.assertTrue(empty_policy.is_empty())
-        self.assertEqual(0, len(empty_policy.bindings))
+        self.assertEqual(False, bool(empty_policy.bindings))
+
+    def test_member_create_from_domain_is_correct(self):
+        member = IamPolicyMember.create_from('domain:xyz.edu')
+        self.assertEqual('domain', member.type)
+        self.assertEqual('xyz.edu', member.name)
+        self.assertEqual('^xyz\\.edu$', member.name_pattern.pattern)
+
+    def test_is_matching_domain_success(self):
+        member = IamPolicyMember.create_from('domain:xyz.edu')
+        other = IamPolicyMember.create_from('user:u@xyz.edu')
+        self.assertTrue(member._is_matching_domain(other))
+
+    def test_is_matching_domain_fail_wrong_domain(self):
+        member = IamPolicyMember.create_from('domain:xyz.edu')
+        other = IamPolicyMember.create_from('user:u@abc.edu')
+        self.assertFalse(member._is_matching_domain(other))
+
+    def test_is_matching_domain_fail_wrong_type(self):
+        member = IamPolicyMember.create_from('group:xyz.edu')
+        other = IamPolicyMember.create_from('user:u@xyz.edu')
+        self.assertFalse(member._is_matching_domain(other))
+
+    def test_is_matching_domain_fail_invalid_email(self):
+        member = IamPolicyMember.create_from('domain:xyz.edu')
+        other = IamPolicyMember.create_from('user:u AT xyz DOT edu')
+        self.assertFalse(member._is_matching_domain(other))
 
 
 if __name__ == '__main__':
-    basetest.main()
+    unittest.main()

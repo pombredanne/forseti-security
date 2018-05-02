@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,247 +12,364 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Loads data into Inventory.
+"""Loads requested data into inventory.
 
 Usage:
-
   $ forseti_inventory \\
-      --organization_id <organization_id> (required) \\
-      --db_host <Cloud SQL database hostname/IP> \\
-      --db_user <Cloud SQL database user> \\
-      --db_passwd <Cloud SQL database password> \\
-      --db_name <Cloud SQL database name (required)> \\
-      --max_crm_api_calls_per_100_seconds <QPS * 100, default 400> \\
-      --sendgrid_api_key <API key to auth SendGrid email service (required)> \\
-      --email_sender <email address of the email sender> (required) \\
-      --email_recipient <email address of the email recipient> (required)
+      --forseti_config (optional)
 
 To see all the dependent flags:
-
   $ forseti_inventory --helpfull
-"""
 
+"""
+from datetime import datetime
 import sys
 
-from datetime import datetime
 import gflags as flags
 
-from ratelimiter import RateLimiter
-
-from google.apputils import app
-from google.cloud.security.common.data_access import db_schema_version
-from google.cloud.security.common.data_access.dao import Dao
-from google.cloud.security.common.data_access.errors import MySQLError
 # TODO: Investigate improving so we can avoid the pylint disable.
 # pylint: disable=line-too-long
+from google.apputils import app
+from google.cloud.security.common.data_access import appengine_dao
+from google.cloud.security.common.data_access import backend_service_dao
+from google.cloud.security.common.data_access import bucket_dao
+from google.cloud.security.common.data_access import cloudsql_dao
+from google.cloud.security.common.data_access import dao
+from google.cloud.security.common.data_access import db_schema_version
+from google.cloud.security.common.data_access import errors as data_access_errors
+from google.cloud.security.common.data_access import firewall_rule_dao
+from google.cloud.security.common.data_access import folder_dao
+from google.cloud.security.common.data_access import forseti_system_dao
+from google.cloud.security.common.data_access import forwarding_rules_dao
+from google.cloud.security.common.data_access import instance_dao
+from google.cloud.security.common.data_access import instance_group_dao
+from google.cloud.security.common.data_access import instance_group_manager_dao
+from google.cloud.security.common.data_access import instance_template_dao
+from google.cloud.security.common.data_access import ke_dao
+from google.cloud.security.common.data_access import organization_dao
+from google.cloud.security.common.data_access import project_dao
+from google.cloud.security.common.data_access import service_account_dao
 from google.cloud.security.common.data_access.sql_queries import snapshot_cycles_sql
-from google.cloud.security.common.util.email_util import EmailUtil
-from google.cloud.security.common.util.errors import EmailSendError
-from google.cloud.security.common.util.log_util import LogUtil
-from google.cloud.security.inventory.errors import LoadDataPipelineError
-from google.cloud.security.inventory.pipelines import load_org_iam_policies_pipeline
-from google.cloud.security.inventory.pipelines import load_projects_iam_policies_pipeline
-from google.cloud.security.inventory.pipelines import load_projects_pipeline
+from google.cloud.security.common.gcp_api import errors as api_errors
+from google.cloud.security.common.util import file_loader
+from google.cloud.security.common.util import log_util
+from google.cloud.security.inventory import api_map
+from google.cloud.security.inventory import errors as inventory_errors
+from google.cloud.security.inventory import pipeline_builder as builder
+from google.cloud.security.inventory import util as inventory_util
+from google.cloud.security.notifier import notifier
 # pylint: enable=line-too-long
+
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('max_crm_api_calls_per_100_seconds', 400,
-                     'Cloud Resource Manager queries per 100 seconds.')
+flags.DEFINE_boolean('list_resources', False,
+                     'List valid resources for inventory.')
 
-flags.DEFINE_string('organization_id', None, 'Organization ID.')
+# Hack to make the test pass due to duplicate flag error here
+# and scanner, enforcer.
+# TODO: Find a way to remove this try/except, possibly dividing the tests
+# into different test suites.
+try:
+    flags.DEFINE_string(
+        'forseti_config',
+        '/home/ubuntu/forseti-security/configs/forseti_conf.yaml',
+        'Fully qualified path and filename of the Forseti config file.')
+except flags.DuplicateFlagError:
+    pass
 
-flags.mark_flag_as_required('organization_id')
 
 # YYYYMMDDTHHMMSSZ, e.g. 20170130T192053Z
 CYCLE_TIMESTAMP_FORMAT = '%Y%m%dT%H%M%SZ'
 
-LOGGER = LogUtil.setup_logging(__name__)
+LOGGER = log_util.get_logger(__name__)
 
 
-def _exists_snapshot_cycles_table(dao):
+def _exists_snapshot_cycles_table(inventory_dao):
     """Whether the snapshot_cycles table exists.
 
     Args:
-        dao: Data access object.
+        inventory_dao (data_access.Dao): Data access object.
 
     Returns:
-        True if the snapshot cycle table exists. False otherwise.
-
-    Raises:
-        MySQLError: An error with MySQL has occurred.
+        bool: True if the snapshot cycle table exists. False otherwise.
     """
     try:
         sql = snapshot_cycles_sql.SELECT_SNAPSHOT_CYCLES_TABLE
-        result = dao.execute_sql_with_fetch(snapshot_cycles_sql.RESOURCE_NAME,
-                                            sql, values=None)
-    except MySQLError as e:
+        result = inventory_dao.execute_sql_with_fetch(
+            snapshot_cycles_sql.RESOURCE_NAME, sql, values=None)
+    except data_access_errors.MySQLError as e:
         LOGGER.error('Error in attempt to find snapshot_cycles table: %s', e)
         sys.exit()
 
-    if len(result) > 0 and result[0]['TABLE_NAME'] == 'snapshot_cycles':
+    if result and result[0]['TABLE_NAME'] == 'snapshot_cycles':
         return True
+
     return False
 
-def _create_snapshot_cycles_table(dao):
+def _create_snapshot_cycles_table(inventory_dao):
     """Create snapshot cycle table.
 
     Args:
-        dao: Data access object.
-
-    Raises:
-        MySQLError: An error with MySQL has occurred.
+        inventory_dao (data_access.Dao): Data access object.
     """
-
     try:
         sql = snapshot_cycles_sql.CREATE_TABLE
-        dao.execute_sql_with_commit(snapshot_cycles_sql.RESOURCE_NAME,
-                                    sql, values=None)
-    except MySQLError as e:
+        inventory_dao.execute_sql_with_commit(snapshot_cycles_sql.RESOURCE_NAME,
+                                              sql, values=None)
+    except data_access_errors.MySQLError as e:
         LOGGER.error('Unable to create snapshot cycles table: %s', e)
         sys.exit()
 
-def _start_snapshot_cycle(dao):
+def _start_snapshot_cycle(inventory_dao):
     """Start snapshot cycle.
 
     Args:
-        dao: Data access object.
+        inventory_dao (dao.Dao): Data access object.
 
     Returns:
-        cycle_timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-
-    Raises:
-        MySQLError: An error with MySQL has occurred.
+        datetime: Datetime object for the cycle_time, in UTC.
+        str: String of cycle_timestamp, formatted as YYYYMMDDTHHMMSSZ.
     """
     cycle_time = datetime.utcnow()
     cycle_timestamp = cycle_time.strftime(CYCLE_TIMESTAMP_FORMAT)
 
-    if not _exists_snapshot_cycles_table(dao):
+    if not _exists_snapshot_cycles_table(inventory_dao):
         LOGGER.info('snapshot_cycles is not created yet.')
-        _create_snapshot_cycles_table(dao)
+        _create_snapshot_cycles_table(inventory_dao)
 
     try:
         sql = snapshot_cycles_sql.INSERT_CYCLE
         values = (cycle_timestamp, cycle_time, 'RUNNING', db_schema_version)
-        dao.execute_sql_with_commit(snapshot_cycles_sql.RESOURCE_NAME,
-                                    sql, values)
-    except MySQLError as e:
+        inventory_dao.execute_sql_with_commit(snapshot_cycles_sql.RESOURCE_NAME,
+                                              sql, values)
+    except data_access_errors.MySQLError as e:
         LOGGER.error('Unable to insert new snapshot cycle: %s', e)
         sys.exit()
 
-    LOGGER.info('Inventory snapshot cycle started: %s', cycle_timestamp)
-    return cycle_timestamp
+    # Ensure all the tables are created, to support client usage & joins,
+    # which expect the tables to exist even if empty.
+    for resource_name in dao.CREATE_TABLE_MAP:
+        inventory_dao.create_snapshot_table(resource_name, cycle_timestamp)
+    LOGGER.debug('All tables created.')
 
-def _complete_snapshot_cycle(dao, cycle_timestamp, status):
+    LOGGER.info('Inventory snapshot cycle started: %s', cycle_timestamp)
+    return cycle_time, cycle_timestamp
+
+# pylint: disable=broad-except
+def _run_pipelines(pipelines):
+    """Run the pipelines to load data.
+
+    Args:
+        pipelines (list): List of pipelines to be run.
+
+    Returns:
+        list: a list of booleans indicating whether each pipeline completed
+            successfully or not.
+    """
+    # TODO: Define these status codes programmatically.
+    run_statuses = []
+    for pipeline in pipelines:
+        try:
+            LOGGER.info('Running pipeline %s', pipeline.__class__.__name__)
+            pipeline.run()
+            pipeline.status = 'SUCCESS'
+            LOGGER.info('Finished running %s', pipeline.__class__.__name__)
+
+        except (api_errors.ApiInitializationError,
+                inventory_errors.LoadDataPipelineError) as e:
+            LOGGER.error('Encountered API error loading data.\n%s', e,
+                         exc_info=True)
+            pipeline.status = 'FAILURE'
+        except Exception as e:
+            LOGGER.error('Encountered error loading data.\n%s', e,
+                         exc_info=True)
+            pipeline.status = 'FAILURE'
+        run_statuses.append(pipeline.status == 'SUCCESS')
+    _adjust_group_members_status(pipelines, run_statuses)
+    return run_statuses
+
+def _adjust_group_members_status(pipelines, run_statuses):
+    """Adjust the `run_status` for the `group_members` pipeline if needed.
+
+    If the `groups` pipeline failed then the `group_members` pipeline
+    should be marked as a failure as well.
+
+    Please note: this function will modify the data passed to it directly
+    if/as needed.
+
+    Args:
+        pipelines (list): List of pipelines that were run.
+        run_statuses (list): a list of booleans indicating whether each
+            pipeline completed successfully or not.
+    """
+    indices = dict(
+        (v, i) for (i, v) in enumerate(p.RESOURCE_NAME for p in pipelines))
+    grps_idx = indices.get('groups')
+    grp_members_idx = indices.get('group_members')
+    # Do nothing unless the status for both 'group_members' and 'groups' is
+    # present and the latter is `False`.
+    if (grps_idx is None or grp_members_idx is None or run_statuses[grps_idx]):
+        return
+
+    if run_statuses[grp_members_idx]:
+        run_statuses[grp_members_idx] = False
+        pipelines[grp_members_idx].status = 'FAILURE'
+
+
+def _complete_snapshot_cycle(inventory_dao, cycle_timestamp, status):
     """Complete the snapshot cycle.
 
     Args:
-        dao: Data access object.
-        cycle_timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-        status: String of the current cycle's status.
-
-    Returns:
-         None
-
-    Raises:
-        MySQLError: An error with MySQL has occurred.
+        inventory_dao (dao.Dao): Data access object.
+        cycle_timestamp (str): Timestamp, formatted as YYYYMMDDTHHMMSSZ.
+        status (str): The current cycle's status.
     """
     complete_time = datetime.utcnow()
 
     try:
         values = (status, complete_time, cycle_timestamp)
         sql = snapshot_cycles_sql.UPDATE_CYCLE
-        dao.execute_sql_with_commit(snapshot_cycles_sql.RESOURCE_NAME,
-                                    sql, values)
-    except MySQLError as e:
+        inventory_dao.execute_sql_with_commit(snapshot_cycles_sql.RESOURCE_NAME,
+                                              sql, values)
+    except data_access_errors.MySQLError as e:
         LOGGER.error('Unable to complete update snapshot cycle: %s', e)
         sys.exit()
 
     LOGGER.info('Inventory load cycle completed with %s: %s',
                 status, cycle_timestamp)
 
-def _send_email(cycle_timestamp, status, sendgrid_api_key,
-                email_sender, email_recipient, email_content=None):
-    """Send an email.
+def _create_dao_map(global_configs):
+    """Create a map of DAOs.
+
+    These will be reusable so that the db connection can apply across
+    different pipelines.
 
     Args:
-        cycle_timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-        status: String of the current snapshot cycle.
-        sendgrid_api_key: String of the sendgrid api key to auth email service.
-        email_sender: String of the sender of the email.
-        email_recipient: String of the recipient of the email.
-        email_content: String of the email content (aka, body).
+        global_configs (dict): Global configurations.
 
     Returns:
-         None
+        dict: Dictionary of DAOs.
     """
-    email_subject = 'Inventory loading {0}: {1}'.format(cycle_timestamp, status)
-
-    if email_content is None:
-        email_content = email_subject
-
     try:
-        email_util = EmailUtil(sendgrid_api_key)
-        email_util.send(email_sender, email_recipient,
-                        email_subject, email_content)
-    except EmailSendError:
-        LOGGER.error('Unable to send email that inventory snapshot completed.')
-
-def main(argv):
-    """Runs the Inventory Loader."""
-
-    del argv
-
-    try:
-        dao = Dao()
-    except MySQLError as e:
-        LOGGER.error('Encountered error with Cloud SQL. Abort.\n%s', e)
+        return {
+            'appengine_dao': appengine_dao.AppEngineDao(global_configs),
+            'backend_service_dao':
+                backend_service_dao.BackendServiceDao(global_configs),
+            'bucket_dao': bucket_dao.BucketDao(global_configs),
+            'cloudsql_dao': cloudsql_dao.CloudsqlDao(global_configs),
+            'dao': dao.Dao(global_configs),
+            'firewall_rule_dao':
+                firewall_rule_dao.FirewallRuleDao(global_configs),
+            'folder_dao': folder_dao.FolderDao(global_configs),
+            'forseti_system_dao':
+                forseti_system_dao.ForsetiSystemDao(global_configs),
+            'forwarding_rules_dao':
+                forwarding_rules_dao.ForwardingRulesDao(global_configs),
+            'ke_dao': ke_dao.KeDao(global_configs),
+            'instance_dao': instance_dao.InstanceDao(global_configs),
+            'instance_group_dao':
+                instance_group_dao.InstanceGroupDao(global_configs),
+            'instance_group_manager_dao':
+                instance_group_manager_dao.InstanceGroupManagerDao(
+                    global_configs),
+            'instance_template_dao':
+                instance_template_dao.InstanceTemplateDao(global_configs),
+            'organization_dao': organization_dao.OrganizationDao(
+                global_configs),
+            'project_dao': project_dao.ProjectDao(global_configs),
+            'service_account_dao':
+                service_account_dao.ServiceAccountDao(global_configs),
+        }
+    except data_access_errors.MySQLError as e:
+        LOGGER.error('Error to creating DAO map.\n%s', e)
         sys.exit()
 
-    cycle_timestamp = _start_snapshot_cycle(dao)
+def _cleanup_tables(inventory_configs, dao_map):
+    """Clean up old inventory tables
 
-    configs = FLAGS.FlagValuesDict()
+    Args:
+        inventory_configs (dict): Inventory configuration
+        dao_map (dict): Lookup dict for DAO objects
+    """
 
-    # It's better to build the ratelimiters once for each API
-    # and reuse them across multiple instances of the Client.
-    # Otherwise, there is a gap where the ratelimiter from one pipeline
-    # is not used for the next pipeline using the same API. This could
-    # lead to unnecessary quota errors.
-    max_crm_calls = configs.get('max_crm_api_calls_per_100_seconds', 400)
-    crm_rate_limiter = RateLimiter(max_crm_calls, 100)
+    retention_days = max(-1, inventory_configs.get('retention_days', -1))
+    LOGGER.info('Retention period: %s days', retention_days)
+    if retention_days > -1:
+        system_dao = dao_map.get('forseti_system_dao')
+        system_dao.cleanup_inventory_tables(retention_days)
 
-    pipelines = [
-        {'pipeline': load_projects_pipeline,
-         'status': ''},
-        {'pipeline': load_projects_iam_policies_pipeline,
-         'status': ''},
-        {'pipeline': load_org_iam_policies_pipeline,
-         'status': ''},
-    ]
 
-    for pipeline in pipelines:
-        try:
-            pipeline['pipeline'].run(
-                dao, cycle_timestamp, configs, crm_rate_limiter)
-            pipeline['status'] = 'SUCCESS'
-        except LoadDataPipelineError as e:
-            LOGGER.error(
-                'Encountered error to load data.\n%s', e)
-            pipeline['status'] = 'FAILURE'
+def main(_):
+    """Runs the Inventory Loader.
 
-    succeeded = [p['status'] == 'SUCCESS' for p in pipelines]
+    Args:
+        _ (list): args that aren't used
+    """
+    del _
+    inventory_flags = FLAGS.FlagValuesDict()
 
-    if all(succeeded):
+    if inventory_flags.get('list_resources'):
+        inventory_util.list_resource_pipelines()
+        sys.exit()
+
+    forseti_config = inventory_flags.get('forseti_config')
+    if forseti_config is None:
+        LOGGER.error('Path to Forseti Security config needs to be specified.')
+        sys.exit()
+
+    try:
+        configs = file_loader.read_and_parse_file(forseti_config)
+    except IOError:
+        LOGGER.error('Unable to open Forseti Security config file. '
+                     'Please check your path and filename and try again.')
+        sys.exit()
+    global_configs = configs.get('global')
+    inventory_configs = configs.get('inventory')
+
+    log_util.set_logger_level_from_config(inventory_configs.get('loglevel'))
+
+    dao_map = _create_dao_map(global_configs)
+
+    _cleanup_tables(inventory_configs, dao_map)
+
+    cycle_time, cycle_timestamp = _start_snapshot_cycle(dao_map.get('dao'))
+
+    pipeline_builder = builder.PipelineBuilder(
+        cycle_timestamp,
+        inventory_configs,
+        global_configs,
+        api_map.API_MAP,
+        dao_map)
+    pipelines = pipeline_builder.build()
+
+    run_statuses = _run_pipelines(pipelines)
+
+    if all(run_statuses):
         snapshot_cycle_status = 'SUCCESS'
-    elif any(succeeded):
+    elif any(run_statuses):
         snapshot_cycle_status = 'PARTIAL_SUCCESS'
     else:
         snapshot_cycle_status = 'FAILURE'
 
-    _complete_snapshot_cycle(dao, cycle_timestamp, snapshot_cycle_status)
-    _send_email(cycle_timestamp, snapshot_cycle_status,
-                configs.get('sendgrid_api_key'),
-                configs.get('email_sender'), configs.get('email_recipient'))
+    _complete_snapshot_cycle(dao_map.get('dao'), cycle_timestamp,
+                             snapshot_cycle_status)
+
+    if global_configs.get('email_recipient') is not None:
+        payload = {
+            'email_sender': global_configs.get('email_sender'),
+            'email_recipient': global_configs.get('email_recipient'),
+            'sendgrid_api_key': global_configs.get('sendgrid_api_key'),
+            'cycle_time': cycle_time,
+            'cycle_timestamp': cycle_timestamp,
+            'snapshot_cycle_status': snapshot_cycle_status,
+            'pipelines': pipelines
+        }
+        message = {
+            'status': 'inventory_done',
+            'payload': payload
+        }
+        notifier.process(message)
 
 
 if __name__ == '__main__':

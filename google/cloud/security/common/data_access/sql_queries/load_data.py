@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,4 +18,11 @@ LOAD_DATA = """
     LOAD DATA LOCAL INFILE '{0}'
     INTO TABLE {1} FIELDS TERMINATED BY ','
     ({2});
+"""
+
+INSERT_VIOLATION = """
+    INSERT INTO {0}
+    (violation_hash, resource_type, resource_id, rule_name, rule_index,
+     violation_type, violation_data, created_at_datetime)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 """

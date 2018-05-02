@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,66 +16,88 @@
 
 import json
 
-from google.cloud.security.common.data_access.errors import CSVFileError
-from google.cloud.security.common.data_access.errors import MySQLError
-from google.cloud.security.common.gcp_api._base_client import ApiExecutionError
-# TODO: Investigate improving so the pylint disable isn't needed.
-# pylint: disable=line-too-long
-from google.cloud.security.common.gcp_api.cloud_resource_manager import CloudResourceManagerClient
-from google.cloud.security.inventory import transform_util
-from google.cloud.security.inventory.errors import LoadDataPipelineError
+from google.cloud.security.common.data_access import errors as da_errors
+from google.cloud.security.common.util import log_util
+from google.cloud.security.common.util import parser
+from google.cloud.security.inventory import errors as inventory_errors
+from google.cloud.security.inventory.pipelines import base_pipeline
+
+LOGGER = log_util.get_logger(__name__)
 
 
-RESOURCE_NAME = 'org_iam_policies'
-RAW_ORG_IAM_POLICIES = 'raw_org_iam_policies'
+class LoadOrgIamPoliciesPipeline(base_pipeline.BasePipeline):
+    """Pipeline to load org IAM policies data into Inventory."""
 
+    RESOURCE_NAME = 'org_iam_policies'
+    RAW_RESOURCE_NAME = 'raw_org_iam_policies'
 
-def run(dao=None, cycle_timestamp=None, configs=None, crm_rate_limiter=None):
-    """Runs the load IAM policies data pipeline.
+    def _transform(self, resource_from_api):
+        """Yield an iterator of loadable iam policies.
 
-    Args:
-        dao: Data access object.
-        cycle_timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-        configs: Dictionary of configurations.
-        crm_rate_limiter: RateLimiter object for CRM API client.
+        Args:
+            resource_from_api (iterable): IAM policies as per-org
+                dictionary.
+                Example: [{'org_id': '11111',
+                          'iam_policy': policy}]
+                https://cloud.google.com/resource-manager/reference/rest/Shared.Types/Policy
 
-    Returns:
-        None
+        Yields:
+            iterable: Loadable iam policies, as a per-org dictionary.
+        """
+        for org_policy_map in resource_from_api:
+            iam_policy = org_policy_map['iam_policy']
+            bindings = iam_policy.get('bindings', [])
+            for binding in bindings:
+                members = binding.get('members', [])
+                for member in members:
+                    member_type, member_name, member_domain = (
+                        parser.parse_member_info(member))
+                    role = binding.get('role', '')
+                    if role.startswith('roles/'):
+                        role = role.replace('roles/', '')
+                    yield {'org_id': org_policy_map['org_id'],
+                           'role': role,
+                           'member_type': member_type,
+                           'member_name': member_name,
+                           'member_domain': member_domain}
 
-    Raises:
-        LoadDataPipelineException: An error with loading data has occurred.
-    """
-    org_id = configs.get('organization_id')
-    # Check if the placeholder is replaced in the config/flag.
-    if org_id == '<organization id>':
-        raise LoadDataPipelineError('No organization id is specified.')
+    def _retrieve(self):
+        """Retrieve the org IAM policies from GCP.
 
-    crm_client = CloudResourceManagerClient(rate_limiter=crm_rate_limiter)
-    try:
-        # Retrieve data from GCP.
-        # Flatten the iterator since we will use it twice, and it is faster
-        # than cloning to 2 iterators.
-        iam_policies_map = crm_client.get_org_iam_policies(
-            RESOURCE_NAME, org_id)
-        # TODO: Investigate improving so the pylint disable isn't needed.
-        # pylint: disable=redefined-variable-type
-        iam_policies_map = list(iam_policies_map)
+        Returns:
+            list: IAM policies as per-org dictionary.
+                Example: [{'org_id': org_id,
+                           'iam_policy': iam_policy}]
+                https://cloud.google.com/resource-manager/reference/rest/Shared.Types/Policy
 
-        # Flatten and relationalize data for upload to cloud sql.
-        flattened_iam_policies = (
-            transform_util.flatten_iam_policies(iam_policies_map))
-    except ApiExecutionError as e:
-        raise LoadDataPipelineError(e)
+        Raises:
+            LoadDataPipelineException: An error with loading data has occurred.
+        """
+        try:
+            orgs = self.dao.get_organizations(
+                self.RESOURCE_NAME, self.cycle_timestamp)
+        except da_errors.MySQLError as e:
+            raise inventory_errors.LoadDataPipelineError(e)
 
-    # Load flattened iam policies into cloud sql.
-    # Load raw iam policies into cloud sql.
-    # A separate table is used to store the raw iam policies because it is
-    # much faster than updating these individually into the projects table.
-    try:
-        dao.load_data(RESOURCE_NAME, cycle_timestamp, flattened_iam_policies)
+        iam_policies = []
+        for org in orgs:
+            iam_policy = self.safe_api_call('get_org_iam_policies',
+                                            self.RESOURCE_NAME,
+                                            org.id)
+            if iam_policy:
+                iam_policies.append(iam_policy)
+        return iam_policies
 
-        for i in iam_policies_map:
+    def run(self):
+        """Runs the data pipeline."""
+        iam_policies = self._retrieve()
+
+        loadable_iam_policies = self._transform(iam_policies)
+
+        self._load(self.RESOURCE_NAME, loadable_iam_policies)
+
+        for i in iam_policies:
             i['iam_policy'] = json.dumps(i['iam_policy'])
-        dao.load_data(RAW_ORG_IAM_POLICIES, cycle_timestamp, iam_policies_map)
-    except (CSVFileError, MySQLError) as e:
-        raise LoadDataPipelineError(e)
+        self._load(self.RAW_RESOURCE_NAME, iam_policies)
+
+        self._get_loaded_count()

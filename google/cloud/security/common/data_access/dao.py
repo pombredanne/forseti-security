@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,100 +22,248 @@ from MySQLdb import OperationalError
 from MySQLdb import ProgrammingError
 from MySQLdb import cursors
 
-from google.cloud.security.common.data_access._db_connector import _DbConnector
+from google.cloud.security.common.data_access import _db_connector
 from google.cloud.security.common.data_access import csv_writer
 from google.cloud.security.common.data_access import load_data_sql_provider
 from google.cloud.security.common.data_access.errors import MySQLError
 from google.cloud.security.common.data_access.errors import NoResultsError
 from google.cloud.security.common.data_access.sql_queries import create_tables
 from google.cloud.security.common.data_access.sql_queries import select_data
-from google.cloud.security.common.util.log_util import LogUtil
+from google.cloud.security.common.util import log_util
 
 
-LOGGER = LogUtil.setup_logging(__name__)
+LOGGER = log_util.get_logger(__name__)
 
 CREATE_TABLE_MAP = {
+    # appengine
+    'appengine': create_tables.CREATE_APPENGINE_TABLE,
+
+    # appengine services
+    'appengine_services': create_tables.CREATE_APPENGINE_SERVICES_TABLE,
+
+    # appengine versions
+    'appengine_versions': create_tables.CREATE_APPENGINE_VERSIONS_TABLE,
+
+    # appengine instances
+    'appengine_instances': create_tables.CREATE_APPENGINE_INSTANCES_TABLE,
+
+    # backend services
+    'backend_services': create_tables.CREATE_BACKEND_SERVICES_TABLE,
+
+    # bigquery
+    'bigquery_datasets': create_tables.CREATE_BIGQUERY_DATASETS_TABLE,
+
+    # buckets
+    'buckets': create_tables.CREATE_BUCKETS_TABLE,
+    'raw_buckets': create_tables.CREATE_RAW_BUCKETS_TABLE,
+    'buckets_acl': create_tables.CREATE_BUCKETS_ACL_TABLE,
+
+    # cloudsql
+    'cloudsql_instances': create_tables.CREATE_CLOUDSQL_INSTANCES_TABLE,
+    'cloudsql_ipaddresses': create_tables.CREATE_CLOUDSQL_IPADDRESSES_TABLE,
+    'cloudsql_ipconfiguration_authorizednetworks':\
+        create_tables.CREATE_CLOUDSQL_IPCONFIGURATION_AUTHORIZEDNETWORKS,
+
+    # folders
+    'folders': create_tables.CREATE_FOLDERS_TABLE,
+    'folder_iam_policies': create_tables.CREATE_FOLDER_IAM_POLICIES_TABLE,
+    'raw_folder_iam_policies': (
+        create_tables.CREATE_RAW_FOLDER_IAM_POLICIES_TABLE),
+
+    # load balancer
+    'forwarding_rules': create_tables.CREATE_FORWARDING_RULES_TABLE,
+
+    # firewall_rules
+    'firewall_rules': create_tables.CREATE_FIREWALL_RULES_TABLE,
+
+    # ke
+    'ke': create_tables.CREATE_KE_TABLE,
+
+    # groups
+    'groups': create_tables.CREATE_GROUPS_TABLE,
+    'group_members': create_tables.CREATE_GROUP_MEMBERS_TABLE,
+
+    # instances
+    'instances': create_tables.CREATE_INSTANCES_TABLE,
+
+    # instance groups
+    'instance_groups': create_tables.CREATE_INSTANCE_GROUPS_TABLE,
+
+    # instance templates
+    'instance_templates': create_tables.CREATE_INSTANCE_TEMPLATES_TABLE,
+
+    # instance group managers
+    'instance_group_managers': (
+        create_tables.CREATE_INSTANCE_GROUP_MANAGERS_TABLE),
+
+    # organizations
+    'organizations': create_tables.CREATE_ORGANIZATIONS_TABLE,
     'org_iam_policies': create_tables.CREATE_ORG_IAM_POLICIES_TABLE,
+    'raw_org_iam_policies': create_tables.CREATE_RAW_ORG_IAM_POLICIES_TABLE,
+
+    # projects
     'projects': create_tables.CREATE_PROJECT_TABLE,
     'project_iam_policies': create_tables.CREATE_PROJECT_IAM_POLICIES_TABLE,
-    # pylint: disable=line-too-long
-    # TODO: Investigate improving so we can avoid the pylint disable.
-    'raw_project_iam_policies': create_tables.CREATE_RAW_PROJECT_IAM_POLICIES_TABLE,
-    'raw_org_iam_policies': create_tables.CREATE_RAW_ORG_IAM_POLICIES_TABLE,
+    'raw_project_iam_policies':
+        create_tables.CREATE_RAW_PROJECT_IAM_POLICIES_TABLE,
+
+    # IAM
+    'service_accounts': create_tables.CREATE_SERVICE_ACCOUNTS_TABLE,
+
+    # rule violations
+    'violations': create_tables.CREATE_VIOLATIONS_TABLE,
 }
 
+SNAPSHOT_STATUS_FILTER_CLAUSE = ' where status in ({})'
 
-class Dao(_DbConnector):
+
+class Dao(_db_connector.DbConnector):
     """Data access object (DAO)."""
 
-    def __init__(self):
-        super(Dao, self).__init__()
+    @staticmethod
+    def map_row_to_object(object_class, row):
+        """Instantiate an object from database row.
 
-    def _create_snapshot_table(self, resource_name, timestamp):
+        TODO: Make this go away when we start using an ORM.
+
+        Args:
+            object_class (object): The object class to create.
+            row (row): The database row to map.
+
+        Returns:
+            obj_class: A new "obj_class", created from the row.
+        """
+        return object_class(**row)
+
+    def create_snapshot_table(self, resource_name, timestamp):
         """Creates a snapshot table.
 
         Args:
-            resource_name: String of the resource name.
-            timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
+            resource_name (str): String of the resource name.
+            timestamp (str): String of timestamp, formatted as
+                YYYYMMDDTHHMMSSZ.
 
         Returns:
-            snapshot_table_name: String of the created snapshot table.
+            str: String of the created snapshot table.
         """
-        snapshot_table_name = resource_name + '_' + timestamp
+        snapshot_table_name = self._create_snapshot_table_name(
+            resource_name, timestamp)
         create_table_sql = CREATE_TABLE_MAP[resource_name]
         create_snapshot_sql = create_table_sql.format(snapshot_table_name)
         cursor = self.conn.cursor()
         cursor.execute(create_snapshot_sql)
         return snapshot_table_name
 
+    @staticmethod
+    def _create_snapshot_table_name(resource_name, timestamp):
+        """Create the snapshot table if it doesn't exist.
+
+        Args:
+            resource_name (str): String of the resource name.
+            timestamp (str): String of timestamp, formatted as
+                YYYYMMDDTHHMMSSZ.
+
+        Returns:
+            str: String of the created snapshot table name.
+        """
+        return resource_name + '_' + timestamp
+
+    def _get_snapshot_table(self, resource_name, timestamp):
+        """Returns a snapshot table name.
+
+        Args:
+            resource_name (str): String of the resource name.
+            timestamp (str): String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
+
+        Returns:
+            str: String of the created snapshot table.
+        """
+        try:
+            snapshot_table_name = self.create_snapshot_table(
+                resource_name, timestamp)
+        except OperationalError:
+            # TODO: find a better way to handle this. I want this method
+            # to be resilient when the table has already been created
+            # so that it can support inserting new data. This will catch
+            # a sql 'table already exist' error and alter the flow.
+            snapshot_table_name = self._create_snapshot_table_name(
+                resource_name, timestamp)
+        return snapshot_table_name
+
     def load_data(self, resource_name, timestamp, data):
         """Load data into a snapshot table.
 
         Args:
-            resource_name: String of the resource name.
-            timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-            data: An iterable or a list of data to be uploaded.
-
-        Returns:
-            None
+            resource_name (str): String of the resource name.
+            timestamp (str): String of timestamp, formatted as
+                YYYYMMDDTHHMMSSZ.
+            data (iterable): An iterable or a list of data to be uploaded.
 
         Raises:
-            MySQLError: An error with MySQL has occurred.
+            MySQLError: When an error has occured while executing the query.
+        """
+        with csv_writer.write_csv(resource_name, data) as csv_file:
+            try:
+                snapshot_table_name = self._create_snapshot_table_name(
+                    resource_name, timestamp)
+                load_data_sql = load_data_sql_provider.provide_load_data_sql(
+                    resource_name, csv_file.name, snapshot_table_name)
+                LOGGER.debug('SQL: %s', load_data_sql)
+                cursor = self.conn.cursor()
+                cursor.execute(load_data_sql)
+                self.conn.commit()
+                # TODO: Return the snapshot table name so that it can be tracked
+                # in the main snapshot table.
+            except (DataError, IntegrityError, InternalError,
+                    NotSupportedError, OperationalError,
+                    ProgrammingError) as e:
+                raise MySQLError(resource_name, e)
+
+    def select_record_count(self, resource_name, timestamp):
+        """Select the record count from a snapshot table.
+
+        Args:
+            resource_name (str): String of the resource name, which is
+                embedded in the table name.
+            timestamp (str): String of timestamp, formatted as
+                YYYYMMDDTHHMMSSZ.
+
+        Returns:
+            int: Integer of the record count in a snapshot table.
+
+        Raises:
+            MySQLError: When an error has occured while executing the query.
         """
         try:
-            snapshot_table_name = self._create_snapshot_table(
+            record_count_sql = select_data.RECORD_COUNT.format(
                 resource_name, timestamp)
-            csv_filename = csv_writer.write_csv(resource_name, data)
-            load_data_sql = load_data_sql_provider.provide_load_data_sql(
-                resource_name, csv_filename, snapshot_table_name)
             cursor = self.conn.cursor()
-            cursor.execute(load_data_sql)
-            self.conn.commit()
-            # TODO: Return the snapshot table name so that it can be tracked
-            # in the main snapshot table.
+            cursor.execute(record_count_sql)
+            return cursor.fetchone()[0]
         except (DataError, IntegrityError, InternalError, NotSupportedError,
                 OperationalError, ProgrammingError) as e:
             raise MySQLError(resource_name, e)
 
-    def select_project_numbers(self, resource_name, timestamp):
-        """Select the project numbers from a snapshot table.
+    def select_group_ids(self, resource_name, timestamp):
+        """Select the group ids from a snapshot table.
 
         Args:
-            resource_name: String of the resource name.
-            timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
+            resource_name (str): String of the resource name.
+            timestamp (str): String of timestamp, formatted as
+                YYYYMMDDTHHMMSSZ.
 
         Returns:
-             list of project numbers
+            list: A list of group ids.
 
         Raises:
-            MySQLError: An error with MySQL has occurred.
+            MySQLError: When an error has occured while executing the query.
         """
         try:
-            project_numbers_sql = select_data.PROJECT_NUMBERS.format(timestamp)
+            group_ids_sql = select_data.GROUP_IDS.format(timestamp)
             cursor = self.conn.cursor(cursorclass=cursors.DictCursor)
-            cursor.execute(project_numbers_sql)
+            cursor.execute(group_ids_sql)
             rows = cursor.fetchall()
-            return [row['project_number'] for row in rows]
+            return [row['group_id'] for row in rows]
         except (DataError, IntegrityError, InternalError, NotSupportedError,
                 OperationalError, ProgrammingError) as e:
             raise MySQLError(resource_name, e)
@@ -124,15 +272,15 @@ class Dao(_DbConnector):
         """Executes a provided sql statement with fetch.
 
         Args:
-            resource_name: String of the resource name.
-            sql: String of the sql statement.
-            values: Tuple of string for sql placeholder values.
+            resource_name (str): String of the resource name.
+            sql (str): String of the sql statement.
+            values (tuple): Tuple of string for sql placeholder values.
 
         Returns:
-             A list of tuples representing rows of sql query result.
+            list: A list of dict representing rows of sql query result.
 
         Raises:
-            MySQLError: An error with MySQL has occurred.
+            MySQLError: When an error has occured while executing the query.
         """
         try:
             cursor = self.conn.cursor(cursorclass=cursors.DictCursor)
@@ -146,15 +294,12 @@ class Dao(_DbConnector):
         """Executes a provided sql statement with commit.
 
         Args:
-            resource_name: String of the resource name.
-            sql: String of the sql statement.
-            values: Tuple of string for sql placeholder values.
-
-        Returns:
-             None
+            resource_name (str): String of the resource name.
+            sql (str): String of the sql statement.
+            values (tuple): Tuple of string for sql placeholder values.
 
         Raises:
-            MySQLError: An error with MySQL has occurred.
+            MySQLError: When an error has occured while executing the query.
         """
         try:
             cursor = self.conn.cursor()
@@ -164,36 +309,32 @@ class Dao(_DbConnector):
                 OperationalError, ProgrammingError) as e:
             raise MySQLError(resource_name, e)
 
-    # pylint: disable=invalid-name
-    # TODO: Investigate improving as to remove pylint disable.
-    def select_latest_complete_snapshot_timestamp(self, statuses):
+    def get_latest_snapshot_timestamp(self, statuses):
         """Select the latest timestamp of the completed snapshot.
 
         Args:
-            statuses: The tuple of snapshot statuses to filter on.
+            statuses (tuple): The tuple of snapshot statuses to filter on.
 
         Returns:
-             The string timestamp of the latest complete snapshot.
+            str: The string timestamp of the latest complete snapshot.
 
         Raises:
-            MySQLError (NoResultsError) if no rows are found.
+            MySQLError: When no rows are found.
         """
         # Build a dynamic parameterized query string for filtering the
         # snapshot statuses
-        if not statuses:
-            statuses = ('SUCCESS')
+        if not isinstance(statuses, tuple):
+            statuses = ('SUCCESS',)
 
-        # TODO: Investigate improving to avoid the pylint disable.
-        status_params = ','.join(
-            ['%s' for s in statuses]) # pylint: disable=unused-variable
-        filter_clause = ' where status in ({})'.format(status_params)
+        status_params = ','.join(['%s']*len(statuses))
+        filter_clause = SNAPSHOT_STATUS_FILTER_CLAUSE.format(status_params)
         try:
             cursor = self.conn.cursor()
             cursor.execute(
                 select_data.LATEST_SNAPSHOT_TIMESTAMP + filter_clause, statuses)
-            rows = cursor.fetchall()
-            if rows and rows[0]:
-                return rows[0][0]
+            row = cursor.fetchone()
+            if row:
+                return row[0]
             raise NoResultsError('No snapshot cycle found.')
         except (DataError, IntegrityError, InternalError, NotSupportedError,
                 OperationalError, ProgrammingError, NoResultsError) as e:

@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,50 +14,59 @@
 
 """Pipeline to load projects data into Inventory."""
 
-from google.cloud.security.common.data_access.errors import CSVFileError
-from google.cloud.security.common.data_access.errors import MySQLError
-from google.cloud.security.common.gcp_api._base_client import ApiExecutionError
-# TODO: Investigate improving so the pylint disable isn't needed.
-# pylint: disable=line-too-long
-from google.cloud.security.common.gcp_api.cloud_resource_manager import CloudResourceManagerClient
-from google.cloud.security.common.util.log_util import LogUtil
-from google.cloud.security.inventory import transform_util
-from google.cloud.security.inventory.errors import LoadDataPipelineError
+from google.cloud.security.common.gcp_type.resource import LifecycleState
+from google.cloud.security.common.util import log_util
+from google.cloud.security.common.util import parser
+from google.cloud.security.inventory.pipelines import base_pipeline
+
+LOGGER = log_util.get_logger(__name__)
 
 
-LOGGER = LogUtil.setup_logging(__name__)
+class LoadProjectsPipeline(base_pipeline.BasePipeline):
+    """Pipeline to load project data into Inventory."""
 
-RESOURCE_NAME = 'projects'
+    RESOURCE_NAME = 'projects'
+
+    def _transform(self, resource_from_api):
+        """Yield an iterator of loadable iam policies.
+
+        Args:
+            resource_from_api (iterable): Resource manager project list
+                response.
+                https://cloud.google.com/resource-manager/reference/rest/v1/projects/list#response-body
+
+        Yields:
+            iterable: Loadable projects, as a per-project dictionary.
+        """
+        for project in (project for d in resource_from_api\
+                        for project in d.get('projects', [])):
+            yield {'project_number': project.get('projectNumber'),
+                   'project_id': project.get('projectId'),
+                   'project_name': project.get('name'),
+                   'lifecycle_state': project.get('lifecycleState'),
+                   'parent_type': project.get('parent', {}).get('type'),
+                   'parent_id': project.get('parent', {}).get('id'),
+                   'raw_project': parser.json_stringify(project),
+                   'create_time': parser.format_timestamp(
+                       project.get('createTime'),
+                       self.MYSQL_DATETIME_FORMAT)}
+
+    def _retrieve(self):
+        """Retrieve the project resources from GCP.
+
+        Returns:
+            iterable: resource manager project list response.
+                https://cloud.google.com/resource-manager/reference/rest/v1/projects/list#response-body
+        """
+        return self.safe_api_call('get_projects',
+                                  self.RESOURCE_NAME,
+                                  lifecycleState=LifecycleState.ACTIVE)
 
 
-def run(dao=None, cycle_timestamp=None, configs=None, crm_rate_limiter=None):
-    """Runs the load projects data pipeline.
-
-    Args:
-        dao: Data access object.
-        cycle_timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-        configs: Dictionary of configurations.
-        crm_rate_limiter: RateLimiter object for CRM API client.
-
-    Returns:
-        None
-
-    Raises:
-        LoadDataPipelineException: An error with loading data has occurred.
-    """
-
-    # Retrieve data from GCP.
-    crm_client = CloudResourceManagerClient(rate_limiter=crm_rate_limiter)
-    try:
-        projects = crm_client.get_projects(RESOURCE_NAME,
-                                           configs['organization_id'])
-        # Flatten and relationalize data for upload to cloud sql.
-        flattened_projects = transform_util.flatten_projects(projects)
-    except ApiExecutionError as e:
-        raise LoadDataPipelineError(e)
-
-    # Load projects data into cloud sql.
-    try:
-        dao.load_data(RESOURCE_NAME, cycle_timestamp, flattened_projects)
-    except (CSVFileError, MySQLError) as e:
-        raise LoadDataPipelineError(e)
+    def run(self):
+        """Runs the data pipeline."""
+        projects_map = self._retrieve()
+        if projects_map:
+            loadable_projects = self._transform(projects_map)
+            self._load(self.RESOURCE_NAME, loadable_projects)
+            self._get_loaded_count()

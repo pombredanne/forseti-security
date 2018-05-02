@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 """Errors related to data access."""
 
+
 class Error(Exception):
     """Base class for errors."""
     pass
@@ -25,6 +26,12 @@ class MySQLError(Error):
     CUSTOM_ERROR_MESSAGE = 'Error with MySQL for {0}:\n{1}'
 
     def __init__(self, resource_name, e):
+        """Initialize.
+
+        Args:
+            resource_name (str): The name of the resource.
+            e (Exception): The exception.
+        """
         super(MySQLError, self).__init__(
             self.CUSTOM_ERROR_MESSAGE.format(resource_name, e))
 
@@ -40,5 +47,11 @@ class CSVFileError(Exception):
     CUSTOM_ERROR_MESSAGE = 'Unable to create csv file for {0}:\n{1}'
 
     def __init__(self, resource_name, e):
+        """Initialize.
+
+        Args:
+            resource_name (str): The name of the resource.
+            e (Exception): The exception.
+        """
         super(CSVFileError, self).__init__(
             self.CUSTOM_ERROR_MESSAGE.format(resource_name, e.message))

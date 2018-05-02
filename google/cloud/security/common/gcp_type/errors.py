@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,4 +36,8 @@ class InvalidIamPolicyBindingError(Error):
 
 class InvalidIamPolicyMemberError(Error):
     """Error for invalid IAM policy members."""
+    pass
+
+class InvalidGroupMemberError(Error):
+    """Error for invalid Group members."""
     pass

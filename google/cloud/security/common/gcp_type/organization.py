@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,52 +16,39 @@
 See: https://cloud.google.com/resource-manager/reference/rest/v1/organizations
 """
 
-# TODO: Investigate improving so we can avoid the pylint disable.
-# pylint: disable=line-too-long
-from google.cloud.security.common.gcp_api.cloud_resource_manager import CloudResourceManagerClient
-from google.cloud.security.common.gcp_type.resource import LifecycleState
-from google.cloud.security.common.gcp_type.resource import Resource
-from google.cloud.security.common.gcp_type.resource import ResourceType
+from google.cloud.security.common.gcp_type import resource
 
 
-# pylint: disable=too-few-public-methods
-# TODO: Investigate improving to not use the disable.
-class OrgLifecycleState(LifecycleState):
-    """Organization lifecycle state.
-
-    See: https://cloud.google.com/resource-manager/reference/rest/v1/organizations#lifecyclestate
-    """
+class OrgLifecycleState(resource.LifecycleState):
+    """Organization lifecycle state."""
 
     DELETED_REQUESTED = 'DELETE_REQUESTED'
 
 
-class Organization(Resource):
+class Organization(resource.Resource):
     """Organization resource."""
 
-    def __init__(self, organization_id, org_name=None,
-                 lifecycle_state=OrgLifecycleState.UNSPECIFIED):
+    RESOURCE_NAME_FMT = 'organizations/%s'
+
+    def __init__(
+            self,
+            organization_id,
+            name=None,
+            display_name=None,
+            lifecycle_state=OrgLifecycleState.UNSPECIFIED):
         """Initialize.
 
         Args:
-            organization_id: The organization id.
-            org_name: The organization's display name.
-            lifecycle_state: The lifecycle state of the organization.
+            organization_id (int): The organization id.
+            name (str): The organization's unique GCP name, with the
+                format "organizations/{id}".
+            display_name (str): The organization's display name.
+            lifecycle_state (LifecycleState): The lifecycle state of the
+                organization.
         """
         super(Organization, self).__init__(
             resource_id=organization_id,
-            resource_type=ResourceType.ORGANIZATION,
-            resource_name=org_name,
-            parent=None,
+            resource_type=resource.ResourceType.ORGANIZATION,
+            name=name,
+            display_name=display_name,
             lifecycle_state=lifecycle_state)
-
-    def exists(self):
-        """Verify that the org exists.
-
-        Returns:
-            True if we can get the org from GCP, otherwise False.
-        """
-        crm_client = CloudResourceManagerClient()
-        org = crm_client.get_organization(
-            'organizations/{}'.format(self.resource_id))
-
-        return org is not None

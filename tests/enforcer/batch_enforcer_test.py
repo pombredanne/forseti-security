@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ import copy
 import json
 import httplib2
 import mock
+import unittest
 
-import testing_constants as constants
-from google.apputils import basetest
+from tests.enforcer import testing_constants as constants
+from tests.unittest_utils import ForsetiTestCase
 from google.protobuf import text_format
 
 from google.cloud.security.enforcer import enforcer_log_pb2
@@ -32,7 +33,7 @@ from google.cloud.security.enforcer import batch_enforcer
 MOCK_TIMESTAMP = 1234567890
 
 
-class BatchFirewallEnforcerTest(basetest.TestCase):
+class BatchFirewallEnforcerTest(ForsetiTestCase):
     """Extended unit tests for BatchFirewallEnforcer class."""
 
     def setUp(self):
@@ -195,4 +196,4 @@ class BatchFirewallEnforcerTest(basetest.TestCase):
 
 
 if __name__ == '__main__':
-    basetest.main()
+    unittest.main()

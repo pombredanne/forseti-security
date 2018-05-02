@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,53 +14,33 @@
 
 """Provides the database connector."""
 
-import gflags as flags
-
 import MySQLdb
 from MySQLdb import OperationalError
 
 from google.cloud.security.common.data_access.errors import MySQLError
-from google.cloud.security.common.util.log_util import LogUtil
+from google.cloud.security.common.util import log_util
 
-LOGGER = LogUtil.setup_logging(__name__)
 
-FLAGS = flags.FLAGS
-flags.DEFINE_string('db_host', '127.0.0.1',
-                    'Cloud SQL instance hostname/IP address')
-flags.DEFINE_string('db_name', 'forseti_security', 'Cloud SQL database name')
-flags.DEFINE_string('db_user', 'root', 'Cloud SQL user')
-flags.DEFINE_string('db_passwd', None, 'Cloud SQL password')
+LOGGER = log_util.get_logger(__name__)
 
-# pylint: disable=too-few-public-methods
-# TODO: Investigate improving so we can avoid the pylint disable.
-class _DbConnector(object):
+class DbConnector(object):
     """Database connector."""
 
-    def __init__(self):
+    def __init__(self, global_configs=None):
         """Initialize the db connector.
+
+        Args:
+            global_configs (dict): Global configurations.
 
         Raises:
             MySQLError: An error with MySQL has occurred.
         """
-        configs = FLAGS.FlagValuesDict()
-
         try:
-            # If specifying the passwd argument, MySQL expects a string,
-            # which would not be correct if there is no password (i.e.
-            # using cloud_sql_proxy to connect without a db password).
-            if 'db_passwd' in configs and configs['db_passwd']:
-                self.conn = MySQLdb.connect(
-                    host=configs['db_host'],
-                    user=configs['db_user'],
-                    passwd=configs['db_passwd'],
-                    db=configs['db_name'],
-                    local_infile=1)
-            else:
-                self.conn = MySQLdb.connect(
-                    host=configs['db_host'],
-                    user=configs['db_user'],
-                    db=configs['db_name'],
-                    local_infile=1)
+            self.conn = MySQLdb.connect(
+                host=global_configs['db_host'],
+                user=global_configs['db_user'],
+                db=global_configs['db_name'],
+                local_infile=1)
         except OperationalError as e:
             LOGGER.error('Unable to create mysql connector:\n%s', e)
             raise MySQLError('DB Connector', e)

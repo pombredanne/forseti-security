@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """GCP Resource.
 
 For now, this only represents Organization resources. In the future, we may
@@ -19,21 +20,50 @@ need to separate the classes depending on implementation.
 
 import abc
 
-# pylint: disable=line-too-long
-# TODO: Investigate improving so we can avoid the pylint disable.
-from google.cloud.security.common.gcp_type.errors import InvalidResourceTypeError
+from google.cloud.security.common.gcp_type import errors
 
 
 class ResourceType(object):
     """Resource types."""
 
+    # Org resources
     ORGANIZATION = 'organization'
     FOLDER = 'folder'
     PROJECT = 'project'
+
+    # Groups
+    GROUP = 'group'
+
+    # IAM
+    SERVICE_ACCOUNT = 'service_account'
+
+    # Compute engine
+    BACKEND_SERVICE = 'backend_service'
+    FIREWALL_RULE = 'firewall_rule'
+    FORWARDING_RULE = 'forwarding_rule'
+    INSTANCE = 'instance'
+    INSTANCE_GROUP = 'instance_group'
+    INSTANCE_GROUP_MANAGER = 'instance_group_manager'
+    INSTANCE_TEMPLATE = 'instance_template'
+    INSTANCE_NETWORK_INTERFACE = 'instance_network_interface'
+
+    # Data storage
+    BIGQUERY_ACL = 'bigquery_datasets'
+    BUCKETS_ACL = 'buckets_acl'
+    CLOUDSQL_ACL = 'cloudsql_instances'
+
+    # AppEngine
+    APPENGINE = 'appengine'
+
+    # KE_CLUSTER
+    KE_CLUSTER = 'ke'
+
     resource_types = frozenset([
         ORGANIZATION,
         FOLDER,
-        PROJECT
+        PROJECT,
+        GROUP,
+        FORWARDING_RULE,
     ])
 
     @classmethod
@@ -41,22 +71,20 @@ class ResourceType(object):
         """Verify if the resource type is recognized.
 
         Args:
-            resource_type: The string resource type.
+            resource_type (str): The resource type.
 
         Returns:
-            The resource type if it is recognized in the resource_types.
+            str: The resource type if it is recognized in the resource_types.
 
         Raises:
-            InvalidResourceTypeError if resource type is not recognized.
+            InvalidResourceTypeError: If resource type is not recognized.
         """
         if resource_type not in cls.resource_types:
-            raise InvalidResourceTypeError(
+            raise errors.InvalidResourceTypeError(
                 'Invalid resource type: {}'.format(resource_type))
         return resource_type
 
 
-# pylint: disable=too-few-public-methods
-# TODO: Look into improving to prevent the pylint disable.
 class LifecycleState(object):
     """Resource lifecycle state."""
 
@@ -69,83 +97,131 @@ class Resource(object):
     """Represents a GCP resource."""
     __metaclass__ = abc.ABCMeta
 
-    def __init__(self, resource_id, resource_type,
-                 resource_name=None, parent=None,
-                 lifecycle_state=LifecycleState.UNSPECIFIED):
+    def __init__(
+            self,
+            resource_id,
+            resource_type,
+            name=None,
+            display_name=None,
+            parent=None,
+            lifecycle_state=LifecycleState.UNSPECIFIED):
         """Initialize.
 
         Args:
-            resource_id: The resource id (string).
-            resource_type: The resource type.
-            resource_name: The resource name.
-            parent: The parent Resource object.
-            lifecycle_state: The lifecycle state of the Resource.
+            resource_id (str): The resource's unique id in GCP.
+            resource_type (str): The resource type.
+            name (str): The resource unique name,
+                e.g. "{resource type}/{id}".
+            display_name (str): The resource display name.
+            parent (Resource): The parent Resource object.
+            lifecycle_state (LifecycleState): The lifecycle state of the
+                Resource.
         """
-        self.resource_id = str(resource_id)
-        self.resource_name = resource_name
-        self.resource_type = resource_type
-        self.parent = parent
-        self.lifecycle_state = lifecycle_state
+        self._resource_id = str(resource_id)
+        self._resource_type = resource_type
+        if name:
+            self._name = name
+        else:
+            self._name = self.RESOURCE_NAME_FMT % resource_id
+        self._display_name = display_name
+        # TODO: maybe need assertion for parent type, e.g. assert that
+        # organization has no parent, whereas projects and folders can
+        # have either another folder or organization as a parent.
+        self._parent = parent
+        self._lifecycle_state = lifecycle_state
 
     def __eq__(self, other):
-        """Test equality of Resource."""
+        """Test equality of Resource.
+
+        Args:
+            other (object): The other object.
+
+        Returns:
+            bool: Whether the objects are equal.
+        """
         if not isinstance(other, type(self)):
             return NotImplemented
-        return (self.resource_id == other.resource_id and
-                self.resource_type == self.resource_type)
+        return (self.id == other.id and
+                self.type == self.type)
 
     def __ne__(self, other):
-        """Test inequality of Resource."""
+        """Test inequality of Resource.
+
+        Args:
+            other (object): The other object.
+
+        Returns:
+            bool: Whether the objects are equal.
+        """
         return not self == other
 
     def __hash__(self):
-        """Create a hash on the resource type and id."""
-        return hash((self.resource_type, self.resource_id))
-
-    def __repr__(self):
-        """String representation of the Resource."""
-        return 'Resource<id={},type={},parent={}>'.format(
-            self.resource_id, self.resource_type, self.parent)
-
-    def get_id(self):
-        """Get resource id."""
-        return self.resource_id
-
-    def get_name(self):
-        """Get resource name."""
-        return self.resource_name
-
-    def get_type(self):
-        """Get resource type."""
-        return self.resource_type
-
-    def get_parent(self):
-        """Get resource parent."""
-        return self.parent
-
-    def get_lifecycle_state(self):
-        """Get the lifecycle state."""
-        return self.lifecycle_state
-
-    def get_ancestors(self, include_self=True):
-        """Get the resource ancestors.
-
-        Args:
-            include_self: Include self in returned iterator.
+        """Create a hash on the resource type and id.
 
         Returns:
-            Iterator of Resources.
+            hash: The hash of the object.
         """
-        if include_self:
-            curr = self
-        else:
-            curr = self.parent
+        return hash((self.type, self.id))
 
-        while curr:
-            yield curr
-            curr = curr.parent
+    def __repr__(self):
+        """String representation of the Resource.
 
-    @abc.abstractmethod
-    def exists(self):
-        """Verify that the resource exists in GCP."""
-        raise NotImplementedError('Implement exists() in subclass')
+        Returns:
+            str: The representation.
+        """
+        return '{}<id={},parent={}>'.format(
+            self.type, self.id, self.parent)
+
+    @property
+    def id(self):
+        """Resource id.
+
+        Returns:
+            str: The id.
+        """
+        return self._resource_id
+
+    @property
+    def type(self):
+        """Resource type.
+
+        Returns:
+            str: The type.
+        """
+        return self._resource_type
+
+    @property
+    def name(self):
+        """GCP name.
+
+        Returns:
+            str: The name.
+        """
+        return self._name
+
+    @property
+    def display_name(self):
+        """Display name.
+
+        Returns:
+            str: The display name.
+        """
+        return self._display_name
+
+    @property
+    def parent(self):
+        """Resource parent.
+
+        Returns:
+            Resource: The parent.
+        """
+        return self._parent
+
+    @property
+    def lifecycle_state(self):
+        """Lifecycle state.
+
+        Returns:
+            LifecycleState: The LifecycleState.
+        """
+        return self._lifecycle_state

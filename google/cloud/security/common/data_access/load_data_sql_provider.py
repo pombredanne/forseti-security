@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,36 +14,23 @@
 
 """Provides the load data sql for resources."""
 
-# TODO: Investigate improving so we can avoid the pylint disable.
-# pylint: disable=line-too-long
-from google.cloud.security.common.data_access.csv_writer import ORG_IAM_POLICIES_FIELDNAMES
-from google.cloud.security.common.data_access.csv_writer import PROJECTS_FIELDNAMES
-from google.cloud.security.common.data_access.csv_writer import PROJECT_IAM_POLICIES_FIELDNAMES
-from google.cloud.security.common.data_access.csv_writer import RAW_ORG_IAM_POLICIES_FIELDNAMES
-from google.cloud.security.common.data_access.csv_writer import RAW_PROJECT_IAM_POLICIES_FIELDNAMES
+from google.cloud.security.common.data_access import csv_writer
 from google.cloud.security.common.data_access.sql_queries import load_data
-# pylint: enable=line-too-long
 
 
-FIELDNAME_MAP = {
-    'org_iam_policies': ORG_IAM_POLICIES_FIELDNAMES,
-    'projects': PROJECTS_FIELDNAMES,
-    'project_iam_policies': PROJECT_IAM_POLICIES_FIELDNAMES,
-    'raw_org_iam_policies': RAW_ORG_IAM_POLICIES_FIELDNAMES,
-    'raw_project_iam_policies': RAW_PROJECT_IAM_POLICIES_FIELDNAMES,
-}
+FIELDNAME_MAP = csv_writer.CSV_FIELDNAME_MAP
 
 
 def provide_load_data_sql(resource_name, csv_filename, snapshot_table_name):
     """Provide the load data sql for projects.
 
     Args:
-        resource_name: String of the resource's name.
-        csv_filename: String of the csv filename; full path included.
-        snapshot_table_name: String of the snapshot table name.
+        resource_name (str): The resource name.
+        csv_filename (str): The csv filename; full path included.
+        snapshot_table_name (str): The snapshot table name.
 
     Returns:
-        String of the load data sql statement for projects.
+        str: The load data sql statement for projects.
     """
     fieldname = FIELDNAME_MAP[resource_name]
     return load_data.LOAD_DATA.format(

@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,43 +11,42 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """A Folder Resource."""
 
-from google.cloud.security.common.gcp_type.resource import LifecycleState
-from google.cloud.security.common.gcp_type.resource import Resource
-from google.cloud.security.common.gcp_type.resource import ResourceType
+from google.cloud.security.common.gcp_type import resource
 
-# pylint: disable=too-few-public-methods
-# TODO: Investigate improving so as to not use the disable.
-class FolderLifecycleState(LifecycleState):
+
+class FolderLifecycleState(resource.LifecycleState):
     """Represents the Folder's LifecycleState."""
     pass
 
 
-class Folder(Resource):
+class Folder(resource.Resource):
     """Folder Resource."""
 
-    def __init__(self, folder_id, folder_name=None,
-                 lifecycle_state=FolderLifecycleState.UNSPECIFIED):
-        """Initalize.
+    RESOURCE_NAME_FMT = 'folders/%s'
+
+    def __init__(
+            self,
+            folder_id,
+            name=None,
+            display_name=None,
+            parent=None,
+            lifecycle_state=FolderLifecycleState.UNSPECIFIED):
+        """Initialize.
 
         Args:
-            folder_id: The string folder id.
-            folder_name: The string folder name.
-            lifecycle_state: The folder's lifecycle state.
+            folder_id (str): The folder id number.
+            name (str): The folder unique GCP name, i.e. "folders/{id}".
+            display_name (str): The folder display name.
+            parent (Resource): The parent Resource.
+            lifecycle_state (LifecycleState): The folder's lifecycle state.
         """
         super(Folder, self).__init__(
             resource_id=folder_id,
-            resource_type=ResourceType.FOLDER,
-            resource_name=folder_name,
-            parent=None,
+            resource_type=resource.ResourceType.FOLDER,
+            name=name,
+            display_name=display_name,
+            parent=parent,
             lifecycle_state=lifecycle_state)
-
-    def exists(self):
-        """Verify that the folder exists.
-
-        Returns:
-            True if we can get the folder from GCP, otherwise False.
-        """
-        # TODO: enable for folders
-        return False

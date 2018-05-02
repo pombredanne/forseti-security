@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,16 +14,24 @@
 
 # The toplevel deployment script for Forseti Security.
 # Be sure to edit this file and its templates to suit your environment.
+# At the minimum, you should edit the following variables:
+#  - CLOUDSQL_INSTANCE_NAME (if creating a new deployment, make sure to
+#    change this variable to something else because Cloud SQL instance
+#    names cannot be used after deletion for up to 7 days)
+#  - SCANNER_BUCKET (Cloud Storage section)
+#  - SCANNER_BUCKET (Compute Engine section)
 
 imports:
-- path: py/inventory/cloudsql-instance.py
+- path: cloudsql/cloudsql-instance.py
   name: cloudsql-instance.py
-- path: py/inventory/cloudsql-database.py
+- path: cloudsql/cloudsql-database.py
   name: cloudsql-database.py
-- path: py/storage/bucket.py
-  name: bucket.py
-- path: py/forseti-instance.py
+- path: compute-engine/forseti-instance.py
   name: forseti-instance.py
+- path: iam/service_acct.py
+  name: service_acct.py
+- path: storage/bucket.py
+  name: bucket.py
 
 resources:
 
@@ -39,25 +47,70 @@ resources:
 # Cloud Storage
 - name: SCANNER_BUCKET
   type: bucket.py
+  properties:
+    location: us
 
 # Compute Engine
 - name: forseti-instance
   type: forseti-instance.py
   properties:
+    # GCE instance properties
     image-project: ubuntu-os-cloud
-    image-family: ubuntu-1404-lts
-    instance-type: f1-micro
+    image-family: ubuntu-1604-lts
+    instance-type: n1-standard-2
+    region: $(ref.cloudsql-instance.region)
     zone: $(ref.cloudsql-instance.region)-c
-    service-account: YOUR_SERVICE_ACCOUNT
+
+    service-account: $(ref.forseti-gcp-reader.email)
     service-account-scopes:
       - https://www.googleapis.com/auth/cloud-platform
     scanner-bucket: SCANNER_BUCKET
     database-name: forseti_security
-    organization-id: YOUR_ORG_ID
-    release-version: "1.0"
-    src-path: https://github.com/GoogleCloudPlatform/forseti-security/archive/v1.0.tar.gz
+    network-host-project-id: NETWORK_HOST_PROJECT_ID
+    vpc-name: VPC_NAME
+    subnetwork-name: SUBNETWORK_NAME
+
+    # --- Forseti version
+    # Use either branch-name or release-version, but NOT both.
+    #
+    # "release-version": A Forseti release.
+    # See https://github.com/GoogleCloudPlatform/forseti-security/releases
+    #
+    # "branch-name": A git branch of Forseti.
+    #
+    # e.g. "I want to deploy Forseti Security's master branch"
+    #    branch-name: "master"
+    #    # release-version: ... <-- COMMENT OUT
+    #
+    # e.g. "I want to deploy release 1.0"
+    #    # branch-name: "master" <-- COMMENT OUT
+    #    release-version: "1.0"
+    branch-name: "master"
+    #release-version: RELEASE_VERSION
+    src-path: https://github.com/GoogleCloudPlatform/forseti-security
+    # --- end Forseti version
+
+    # Cloud SQL
     cloudsqlproxy-os-arch: linux.amd64
     db-port: 3306
-    sendgrid-api-key: YOUR_SENDGRID_API_KEY
-    email-sender: EMAIL_ADDRESS_OF_YOUR_SENDER
-    email-recipient: EMAIL_ADDRESS_OF_YOUR_RECIPIENT
+
+# Service accounts
+- name: forseti-gcp-reader
+  type: service_acct.py
+  properties:
+    accountId: forseti-gcp-reader
+    displayName: forseti-gcp-reader
+
+- name: forseti-gsuite-reader
+  type: service_acct.py
+  properties:
+    accountId: forseti-gsuite-reader
+    displayName: forseti-gsuite-reader
+
+# Outputs
+- name: GcpServiceAccount
+  value: $(ref.forseti-gcp-reader.email)
+- name: GsuiteServiceAccount
+  value: $(ref.forseti-gsuite-reader.email)
+- name: GceZone
+  value: $(ref.forseti-instance.zone)

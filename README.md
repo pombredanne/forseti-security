@@ -1,33 +1,32 @@
-[![Build Status](https://travis-ci.org/GoogleCloudPlatform/forseti-security.svg?branch=master)](https://travis-ci.org/GoogleCloudPlatform/forseti-security)
+**branch: master** | **branch: dev** | **branch: forsetisecurity.org**
+:------------ | :------------ | :------------
+[![Build Status](https://travis-ci.org/GoogleCloudPlatform/forseti-security.svg?branch=master)](https://travis-ci.org/GoogleCloudPlatform/forseti-security)|[![Build Status](https://travis-ci.org/GoogleCloudPlatform/forseti-security.svg?branch=dev)](https://travis-ci.org/GoogleCloudPlatform/forseti-security)|[![Build Status](https://travis-ci.org/GoogleCloudPlatform/forseti-security.svg?branch=forsetisecurity.org)](https://travis-ci.org/GoogleCloudPlatform/forseti-security)|
+[![codecov](https://codecov.io/gh/GoogleCloudPlatform/forseti-security/branch/master/graph/badge.svg)](https://codecov.io/gh/GoogleCloudPlatform/forseti-security)|[![codecov](https://codecov.io/gh/GoogleCloudPlatform/forseti-security/branch/dev/graph/badge.svg)](https://codecov.io/gh/GoogleCloudPlatform/forseti-security)
+
 
 # Forseti Security
-Forseti Security helps you secure your Google Cloud Platform (GCP) environment.
 
-Features:
+A community-driven collection of open source tools to improve the security
+of your Google Cloud Platform environments.
 
-* [Visibility](google/cloud/security/inventory/README.md): Build and store an inventory of your GCP resources.
-* [Detection](google/cloud/security/scanner/README.md): Find policy violations across various resources in GCP.
-* [Enforcement](google/cloud/security/enforcer/README.md): Apply changes to enforce policy when needed.
+[Get Started](http://forsetisecurity.org/docs/quickstarts/forseti-security/)
+with Forseti Security.
 
-We are continually improving Forseti Security and invite you to submit feature requests and bug reports under Issues. If you would like to contribute to our development efforts, please review our [contributing guidelines](/CONTRIBUTING.md) and submit a pull request.
+## Contributing
 
-# Setup
-There are two ways to run Forseti Security.
+We are continually improving Forseti Security and invite you to submit feature
+requests and bug reports under Issues. If you would like to contribute to our
+development efforts, please review our
+[contributing guidelines](/.github/CONTRIBUTING.md) and submit a pull request.
 
-### Google Cloud Platform (recommended)
-Use this [README](/deployment-templates/README.md) to deploy
-Forseti Security to GCP quickly and easily.
+### forsetisecurity.org
 
-### Local Environment
-Use this [README](/google/cloud/security/README.md) to install and use
-Forseti Security on your own machine.
+If you would like to contribute to forsetisecurity.org, the website and its
+content are contained in the [`forsetisecurity.org` branch](https://github.com/GoogleCloudPlatform/forseti-security/tree/forsetisecurity.org). Visit its
+[README](https://github.com/GoogleCloudPlatform/forseti-security/tree/forsetisecurity.org)
+for instructions on how to make changes.
 
-# Contact us
-Reach out to us with questions by contacting
-[forseti-security@google.com](mailto:forseti-security@google.com).
+## Community
 
-For enhancements, bugs, or other similar items, please open an
-[issue](https://github.com/GoogleCloudPlatform/forseti-security/issues).
-
-# Disclaimer
-This is not an official Google product.
+Check out our [community page](http://forsetisecurity.org/community/) for ways
+to engage with the Forseti Community.

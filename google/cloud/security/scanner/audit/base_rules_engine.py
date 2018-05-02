@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,10 +17,14 @@
 Loads YAML rules either from local file system or Cloud Storage bucket.
 """
 
+import abc
+
 from google.cloud.security.common.util import file_loader
-from google.cloud.security.common.util.log_util import LogUtil
-# pylint: disable=line-too-long
-from google.cloud.security.scanner.audit.errors import InvalidRuleDefinitionError
+from google.cloud.security.common.util import log_util
+from google.cloud.security.scanner.audit import errors as audit_errors
+
+
+LOGGER = log_util.get_logger(__name__)
 
 
 class BaseRulesEngine(object):
@@ -28,40 +32,43 @@ class BaseRulesEngine(object):
 
     def __init__(self,
                  rules_file_path=None,
-                 logger_name=None):
+                 snapshot_timestamp=None):
         """Initialize.
 
         Args:
-            rules_file_path: The path to the rules file.
-            logger_name: The name of module for logger.
+            rules_file_path (str): The path of the rules file, either
+                local or GCS.
+            snapshot_timestamp (str): The snapshot to associate any
+                data lookups.
         """
         if not rules_file_path:
-            raise InvalidRuleDefinitionError(
+            raise audit_errors.InvalidRuleDefinitionError(
                 'File path: {}'.format(rules_file_path))
         self.full_rules_path = rules_file_path.strip()
+        self.snapshot_timestamp = snapshot_timestamp
 
-        if not logger_name:
-            logger_name = __name__
-        self.logger = LogUtil.setup_logging(logger_name)
+    def build_rule_book(self, global_configs):
+        """Build RuleBook from the rules definition file.
 
-    def build_rule_book(self):
-        """Build RuleBook from the rules definition file."""
-        raise NotImplementedError('Implement in a child class.')
+        Args:
+            global_configs (dict): The global Forseti configuration.
 
-    def find_policy_violations(self, resource, policy, force_rebuild=False):
-        """Determine whether IAM policy violates rules."""
+        Raises:
+            NotImplementedError: The method should be defined in subclass.
+        """
         raise NotImplementedError('Implement in a child class.')
 
     def _load_rule_definitions(self):
         """Load the rule definitions file from GCS or local filesystem.
 
         Returns:
-            The parsed dict from the rule definitions file.
+            dict: The parsed dict from the rule definitions file.
         """
-        return file_loader.read_and_parse_file(self.full_rules_path)
+        LOGGER.debug('Loading %r rules from %r', self, self.full_rules_path)
+        rules = file_loader.read_and_parse_file(self.full_rules_path)
+        LOGGER.debug('Got rules: %r', rules)
+        return rules
 
-# TODO: Investigate not using a class for a storage object.
-# pylint: disable=too-few-public-methods
 class BaseRuleBook(object):
     """Base class for RuleBooks.
 
@@ -70,8 +77,17 @@ class BaseRuleBook(object):
     the RuleBook depends on how rules should be applied. For example,
     Organization resource rules would be applied in a hierarchical manner.
     """
+    __metaclass__ = abc.ABCMeta
 
-    def __init__(self, logger_name=None):
-        if not logger_name:
-            logger_name = __name__
-        self.logger = LogUtil.setup_logging(logger_name)
+    @abc.abstractmethod
+    def add_rule(self, rule_def, rule_index):
+        """Add rule to rule book.
+
+        Args:
+            rule_def (dict): Add a rule definition to the rule book.
+            rule_index (int): The index of the rule.
+
+        Raises:
+            NotImplementedError: The method should be defined in subclass.
+        """
+        raise NotImplementedError('Implement add_rule() in subclass')

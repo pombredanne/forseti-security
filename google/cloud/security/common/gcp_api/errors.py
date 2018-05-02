@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +12,65 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Errors module."""
+"""API errors."""
 
 
 class Error(Exception):
-    """Base error class for the module."""
+    """Base Error class."""
+
+
+class ApiExecutionError(Error):
+    """Error for API executions."""
+
+    CUSTOM_ERROR_MESSAGE = (
+        'GCP API Error: unable to get {0} from GCP:\n{1}\n{2}')
+
+    def __init__(self, resource_name, e):
+        """Initialize.
+
+        Args:
+            resource_name (str): The resource name.
+            e (Exception): The exception.
+        """
+        super(ApiExecutionError, self).__init__(
+            self.CUSTOM_ERROR_MESSAGE.format(
+                resource_name, e, e.content.decode('utf-8')))
+        self.http_error = e
+
+
+class ApiNotEnabledError(Error):
+    """The requested API is not enabled on this project."""
+
+    CUSTOM_ERROR_MESSAGE = ('GCP API Error; API not enabled, turn it on at '
+                            '{0}:\n{1}')
+
+    def __init__(self, error_url, e):
+        """Initialize.
+
+        Args:
+            error_url (str): The error url.
+            e (Exception): The exception.
+        """
+        super(ApiNotEnabledError, self).__init__(
+            self.CUSTOM_ERROR_MESSAGE.format(error_url, e))
+        self.http_error = e
+
+
+class ApiInitializationError(Error):
+    """Error initializing the API."""
 
 
 class InvalidBucketPathError(Error):
     """Invalid GCS bucket path."""
-    pass
+
+
+class UnsupportedApiError(Error):
+    """Error for unsupported API."""
+
+
+class UnsupportedApiVersionError(Error):
+    """Error for unsupported API version."""
+
+
+class PaginationNotSupportedError(Error):
+    """Paged Query was issued against an API that does not support paging."""

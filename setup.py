@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,12 +19,11 @@ import os
 import subprocess
 import sys
 
-import google.cloud.security
-
 from setuptools import find_packages
 from setuptools import setup
 from setuptools.command.install import install
 
+import google.cloud.security
 
 FORSETI_VERSION = google.cloud.security.__version__
 
@@ -35,24 +34,35 @@ NAMESPACE_PACKAGES = [
 ]
 
 INSTALL_REQUIRES = [
+    'anytree==2.1.4',
     'futures==3.0.5',
     'google-api-python-client==1.6.1',
     'Jinja2==2.9.5',
     'MySQL-python==1.2.5',
-    'protobuf==3.2.0',
+    'netaddr>=0.7.19',
+    'protobuf>=3.2.0',
     'PyYAML==3.12',
     'ratelimiter==1.1.0',
     'retrying==1.3.3',
+    'requests[security]==2.18.4',
     'sendgrid==3.6.3',
+    'SQLAlchemy==1.1.9',
+    'pygraph>=0.2.1',
+    'unicodecsv==0.14.1',
 ]
 
 SETUP_REQUIRES = [
     'google-apputils==0.4.2',
     'python-gflags==3.1.1',
+    'grpcio==1.4.0',
+    'grpcio-tools==1.4.0',
+    'protobuf>=3.2.0',
 ]
 
 TEST_REQUIRES = [
     'mock==2.0.0',
+    'SQLAlchemy==1.1.9',
+    'parameterized==0.6.1',
 ]
 
 if sys.version_info < (2, 7):
@@ -63,7 +73,7 @@ if sys.version_info.major > 2:
 
 def build_protos():
     """Build protos."""
-    subprocess.check_call(['python', 'makefile.py', '--clean'])
+    subprocess.check_call(['python', 'build_protos.py', '--clean'])
 
 class PostInstallCommand(install):
     """Post installation command."""
@@ -71,7 +81,6 @@ class PostInstallCommand(install):
     def run(self):
         build_protos()
         install.do_egg_install(self)
-
 
 setup(
     name='forseti-security',
@@ -86,7 +95,7 @@ setup(
         'License :: OSI Approved :: Apache Software License'
     ],
     cmdclass={
-        'install': PostInstallCommand
+        'install': PostInstallCommand,
     },
     install_requires=SETUP_REQUIRES + INSTALL_REQUIRES,
     setup_requires=SETUP_REQUIRES,
@@ -95,7 +104,7 @@ setup(
         '*.tests', '*.tests.*', 'tests.*', 'tests']),
     include_package_data=True,
     package_data={
-        'email_templates': ['*.jinja']
+        '': ['cloud/security/common/email_templates/*.jinja']
     },
     namespace_packages=NAMESPACE_PACKAGES,
     google_test_dir='tests',
@@ -106,6 +115,7 @@ setup(
             'forseti_inventory = google.cloud.security.stubs:RunForsetiInventory',
             'forseti_scanner = google.cloud.security.stubs:RunForsetiScanner',
             'forseti_enforcer = google.cloud.security.stubs:RunForsetiEnforcer',
+            'forseti_notifier = google.cloud.security.stubs:RunForsetiNotifier',
         ]
     },
     zip_safe=False,   # Set to False: apputils doesn't like zip_safe eggs

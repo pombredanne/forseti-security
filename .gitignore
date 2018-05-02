@@ -1,21 +1,31 @@
 # Eclipse metafile.
 .project
+.pydevproject
+
+# Pycharm metafiles
+.idea/*
 
 # Compiled python
 *.pyc
 
 # Compiled protobuf
 *_pb2.py
+*_pb2_grpc.py
 
 # Miscellaneous
 .DS_Store
 .*swp
+
+# Possible credentials
+/*.json
+scripts/gcp_setup/*.json
 
 # Dev scripts
 scripts/dev*.sh
 
 # User-edited configs
 deployment-templates/*.yaml
+configs/*.yaml
 
 # Build/dist
 .eggs/
@@ -24,3 +34,10 @@ deployment-templates/*.yaml
 build/
 dist/
 out/
+
+# Coverage
+.coverage
+htmlcov/
+
+run_server.sh
+run_client.sh

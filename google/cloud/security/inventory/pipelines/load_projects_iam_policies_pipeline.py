@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,75 +16,97 @@
 
 import json
 
-from google.cloud.security.common.data_access.errors import CSVFileError
-from google.cloud.security.common.data_access.errors import MySQLError
-from google.cloud.security.common.gcp_api._base_client import ApiExecutionError
-# TODO: Investigate improving so the pylint disable isn't needed.
-# pylint: disable=line-too-long
-from google.cloud.security.common.gcp_api.cloud_resource_manager import CloudResourceManagerClient
-from google.cloud.security.common.util.log_util import LogUtil
-from google.cloud.security.inventory import transform_util
-from google.cloud.security.inventory.errors import LoadDataPipelineError
+from google.cloud.security.common.data_access import errors as dao_errors
+from google.cloud.security.common.util import log_util
+from google.cloud.security.common.util import parser
+from google.cloud.security.inventory import errors as inventory_errors
+from google.cloud.security.inventory.pipelines import base_pipeline
+
+LOGGER = log_util.get_logger(__name__)
 
 
+class LoadProjectsIamPoliciesPipeline(base_pipeline.BasePipeline):
+    """Pipeline to load project IAM policies data into Inventory."""
 
-LOGGER = LogUtil.setup_logging(__name__)
-RESOURCE_NAME = 'project_iam_policies'
-RAW_PROJECT_IAM_POLICIES = 'raw_project_iam_policies'
+    RESOURCE_NAME = 'project_iam_policies'
+    RAW_RESOURCE_NAME = 'raw_project_iam_policies'
 
-def run(dao=None, cycle_timestamp=None, configs=None, crm_rate_limiter=None):
-    """Runs the load IAM policies data pipeline.
+    def _transform(self, resource_from_api):
+        """Yield an iterator of loadable iam policies.
 
-    Args:
-        dao: Data access object.
-        cycle_timestamp: String of timestamp, formatted as YYYYMMDDTHHMMSSZ.
-        crm_rate_limiter: RateLimiter object for CRM API client.
+        Args:
+            resource_from_api (iterable): IAM policies as per-project
+                dictionary.
+                Example: {'project_number': 11111,
+                          'iam_policy': policy}
+                https://cloud.google.com/resource-manager/reference/rest/Shared.Types/Policy
 
-    Returns:
-        None
+        Yields:
+            iterable: Loadable iam policies, as a per-org dictionary.
+        """
+        for iam_policy_map in resource_from_api:
+            iam_policy = iam_policy_map['iam_policy']
+            bindings = iam_policy.get('bindings', [])
+            for binding in bindings:
+                members = binding.get('members', [])
+                for member in members:
+                    member_type, member_name, member_domain = (
+                        parser.parse_member_info(member))
+                    role = binding.get('role', '')
+                    if role.startswith('roles/'):
+                        role = role.replace('roles/', '')
+                        yield {
+                            'project_number': iam_policy_map['project_number'],
+                            'role': role,
+                            'member_type': member_type,
+                            'member_name': member_name,
+                            'member_domain': member_domain}
 
-    Raises:
-        LoadDataPipelineException: An error with loading data has occurred.
-    """
-    _ = configs
+    def _retrieve(self):
+        """Retrieve the project IAM policies from GCP.
 
-    # Get the projects for which we will retrieve the IAM policies.
-    try:
-        project_numbers = dao.select_project_numbers(RESOURCE_NAME,
-                                                     cycle_timestamp)
-    except MySQLError as e:
-        raise LoadDataPipelineError(e)
+        Returns:
+            list: IAM policies as per-org dictionary.
+                Example: [{project_number: project_number,
+                          iam_policy: iam_policy}]
+                https://cloud.google.com/resource-manager/reference/rest/Shared.Types/Policy
 
-    crm_client = CloudResourceManagerClient(rate_limiter=crm_rate_limiter)
-
-    # Retrieve data from GCP.
-    # Not using iterator since we will use the iam_policy_maps twice.
-    iam_policy_maps = []
-    for project_number in project_numbers:
+        Raises:
+            LoadDataPipelineException: An error with loading data has occurred.
+        """
+        # Get the projects for which we will retrieve the IAM policies.
         try:
-            iam_policy = crm_client.get_project_iam_policies(
-                RESOURCE_NAME, project_number)
-            iam_policy_map = {'project_number': project_number,
-                              'iam_policy': iam_policy}
-            iam_policy_maps.append(iam_policy_map)
-        except ApiExecutionError as e:
-            LOGGER.error('Unable to get IAM policies for project %s:\n%s',
-                         project_number, e)
+            project_numbers = self.dao.get_project_numbers(
+                self.RESOURCE_NAME, self.cycle_timestamp)
+        except dao_errors.MySQLError as e:
+            raise inventory_errors.LoadDataPipelineError(e)
 
-    # Flatten and relationalize data for upload to cloud sql.
-    flattened_iam_policies = (
-        transform_util.flatten_iam_policies(iam_policy_maps))
+        # Retrieve data from GCP.
+        # Not using iterator since we will use the iam_policy_maps twice.
+        iam_policy_maps = []
+        for project_number in project_numbers:
+            iam_policy = self.safe_api_call('get_project_iam_policies',
+                                            self.RESOURCE_NAME,
+                                            project_number)
+            if iam_policy:
+                iam_policy_map = {'project_number': project_number,
+                                  'iam_policy': iam_policy}
+                iam_policy_maps.append(iam_policy_map)
+        return iam_policy_maps
 
-    # Load flattened iam policies into cloud sql.
-    # Load raw iam policies into cloud sql.
-    # A separate table is used to store the raw iam policies because it is
-    # much faster than updating these individually into the projects table.
-    try:
-        dao.load_data(RESOURCE_NAME, cycle_timestamp, flattened_iam_policies)
+    def run(self):
+        """Runs the load IAM policies data pipeline."""
+        iam_policy_maps = self._retrieve()
 
+        loadable_iam_policies = self._transform(iam_policy_maps)
+
+        self._load(self.RESOURCE_NAME, loadable_iam_policies)
+
+        # A separate table is used to store the raw iam policies json
+        # because it is much faster than updating these individually
+        # into the projects table.
         for i in iam_policy_maps:
             i['iam_policy'] = json.dumps(i['iam_policy'])
-        dao.load_data(RAW_PROJECT_IAM_POLICIES, cycle_timestamp,
-                      iam_policy_maps)
-    except (CSVFileError, MySQLError) as e:
-        raise LoadDataPipelineError(e)
+        self._load(self.RAW_RESOURCE_NAME, iam_policy_maps)
+
+        self._get_loaded_count()

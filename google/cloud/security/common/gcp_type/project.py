@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,65 +11,58 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """A Project Resource.
 
 See: https://cloud.google.com/resource-manager/reference/rest/v1/projects
 """
 
-# pylint: disable=line-too-long
-# TODO: Investigate improving so we can avoid the pylint disable.
-from google.cloud.security.common.gcp_api.cloud_resource_manager import CloudResourceManagerClient
-from google.cloud.security.common.gcp_type.resource import LifecycleState
-from google.cloud.security.common.gcp_type.resource import Resource
-from google.cloud.security.common.gcp_type.resource import ResourceType
+from google.cloud.security.common.gcp_type import resource
 
 
-# pylint: disable=too-few-public-methods
-# TODO: Investigate improving to avoid the use of the pylint disable.
-class ProjectLifecycleState(LifecycleState):
-    """Project lifecycle state.
-
-    See: https://cloud.google.com/resource-manager/reference/rest/v1/projects#LifecycleState
-    """
+class ProjectLifecycleState(resource.LifecycleState):
+    """Project lifecycle state."""
 
     DELETE_REQUESTED = 'DELETE_REQUESTED'
-    DELETE_IN_PROGRESS = 'DELETE_IN_PROGRESS'
 
 
-class Project(Resource):
+class Project(resource.Resource):
     """Project resource."""
 
-    def __init__(self, project_id, project_number,
-                 project_name=None, parent=None,
-                 lifecycle_state=ProjectLifecycleState.UNSPECIFIED):
+    RESOURCE_NAME_FMT = 'projects/%s'
+
+    def __init__(
+            self,
+            project_id,
+            project_number=None,
+            name=None,
+            display_name=None,
+            parent=None,
+            lifecycle_state=ProjectLifecycleState.UNSPECIFIED):
         """Initialize.
 
         Args:
-            project_id: The project string id.
-            project_number: The project number.
-            project_name: The project name.
-            parent: The parent Resource.
-            lifecycle_state: The project's lifecycle state.
+            project_id (str): The project "named" id.
+            project_number (int): The project number.
+            name (str): The full unique GCP name, with the format
+                "projects/{projectId}".
+            display_name (str): The display name.
+            parent (Resource): The parent Resource.
+            lifecycle_state (LifecycleState): The project's lifecycle state.
         """
         super(Project, self).__init__(
             resource_id=project_id,
-            resource_type=ResourceType.PROJECT,
-            resource_name=project_name,
+            resource_type=resource.ResourceType.PROJECT,
+            name=name,
+            display_name=display_name,
             parent=parent,
             lifecycle_state=lifecycle_state)
         self.project_number = project_number
 
     def get_project_number(self):
-        """Returns the project number."""
-        return self.project_number
-
-    def exists(self):
-        """Verify that the project exists.
+        """Returns the project number.
 
         Returns:
-            True if we can get the project from GCP, otherwise False.
+            int: The project number.
         """
-        crm_client = CloudResourceManagerClient()
-        project = crm_client.get_project(self.resource_id)
-
-        return project is not None
+        return self.project_number

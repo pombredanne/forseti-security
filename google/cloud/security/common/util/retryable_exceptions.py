@@ -1,4 +1,4 @@
-# Copyright 2017 Google Inc.
+# Copyright 2017 The Forseti Security Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ RETRYABLE_EXCEPTIONS = (
     httplib2.ServerNotFoundError,
     socket.error,
     ssl.SSLError,
-    urllib2.URLError,  # no network connection is included here
+    urllib2.URLError,  # include "no network connection"
 )
 
 
@@ -36,9 +36,9 @@ def is_retryable_exception(e):
     """Whether exception should be retried.
 
     Args:
-        e: Exception object.
+        e (Exception): Exception object.
 
     Returns:
-        True for exceptions to retry.  False otherwise.
+        bool: True for exceptions to retry. False otherwise.
     """
     return isinstance(e, RETRYABLE_EXCEPTIONS)
